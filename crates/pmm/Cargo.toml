@@ -1,0 +1,16 @@
+[package]
+name = "pmm"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+description = "Polaris Memory Manager"
+
+[features]
+software-emulation = []
+
+[dependencies]
+spin.workspace = true
+log.workspace = true
+
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+x86_64.workspace = true

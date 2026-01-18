@@ -1,0 +1,31 @@
+[package]
+name = "polaris_kernel"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+description = "My lil' OS project"
+
+[[bin]]
+name = "polaris"
+path = "src/main.rs"
+
+# cSpell: disable
+[dependencies]
+limine.workspace = true
+noto-sans-mono-bitmap.workspace = true
+log.workspace = true
+spin.workspace = true
+uart_16550.workspace = true
+pmm.workspace = true
+symbolicator.workspace = true
+acpi = { workspace = true, optional = true }
+elf = { version = "0.8.0", default-features = false }
+
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+x86_64 = "0.15.4"
+
+[features]
+default = ["acpi"]
+acpi = ["dep:acpi"]
+detailed-logging = []
+

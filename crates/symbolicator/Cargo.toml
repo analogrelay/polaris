@@ -1,0 +1,24 @@
+[package]
+name = "symbolicator"
+description = "Converts Dwarf debug info into a separate, simple symbol table file for use with Polaris kernel"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "symbolicator"
+path = "src/lib.rs"
+
+[[bin]]
+name = "symbolicator"
+path = "src/main.rs"
+
+[dependencies]
+# No dependencies for lib.rs (no_std)
+
+[target.'cfg(not(target_os = "none"))'.dependencies]
+# Dependencies only for main.rs (std-only)
+gimli = "0.32.3"
+clap = { version = "4", features = ["derive"] }
+elf = "0.8.0"
+rayon = "1.11.0"
+rustc-demangle = "0.1"

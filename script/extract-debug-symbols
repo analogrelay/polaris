@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ne 2 ]; then
+    echo "Usage: $0 <elf-binary> <symbol-file>" >&2
+    echo "" >&2
+    echo "Extracts debug symbols from an ELF binary into a separate symbol file," >&2
+    echo "then strips the debug symbols from the original binary." >&2
+    exit 1
+fi
+
+BINARY="$1"
+SYMBOL_FILE="$2"
+
+if [ ! -f "$BINARY" ]; then
+    echo "Error: Binary file not found: $BINARY" >&2
+    exit 1
+fi
+
+echo "Extracting debug symbols from $BINARY to $SYMBOL_FILE..."
+objcopy --only-keep-debug "$BINARY" "$SYMBOL_FILE"
+
+echo "Stripping debug symbols from $BINARY..."
+objcopy --strip-debug "$BINARY"
+
+echo "Adding debug link to $BINARY..."
+objcopy --add-gnu-debuglink="$SYMBOL_FILE" "$BINARY"
+
+echo "Done. Debug symbols saved to $SYMBOL_FILE"

@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = ["crates/kernel", "crates/pmm", "crates/symbolicator"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+authors = ["Ashley Stanton-Nurse <contact@analogrelay.net>"]
+
+# cSpell:disable
+[workspace.dependencies]
+acpi = "5.2.0"
+limine = "0.5.0"
+noto-sans-mono-bitmap = { version = "0.3.2", features = ["size_24"] }
+spin = "0.10.0"
+uart_16550 = "0.4.0"
+log = "0.4.29"
+x86_64 = "0.15.1"
+addr2line = { version = "0.25.1", default-features = false, features = ["rustc-demangle"] }
+
+pmm = { path = "crates/pmm" }
+symbolicator = { path = "crates/symbolicator" }
