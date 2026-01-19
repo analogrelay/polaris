@@ -16,6 +16,85 @@ use crate::{
     interrupts::{InterruptContext, InterruptKind, interrupt_was_received},
 };
 
+/// Magic number to identify a valid InterruptUnwindContext on the stack.
+pub const INTERRUPT_UNWIND_MAGIC: usize = 0xDEAD_C0DE_CAFE_BABE;
+
+/// Context saved when an interrupt occurs, for stack unwinding.
+///
+/// Placed on the stack in `common_interrupt` so the unwinder can find it
+/// by scanning below the frame pointer. The magic number verifies we found
+/// a valid context.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct InterruptUnwindContext {
+    pub magic: usize,
+    pub vector: u8,
+    pub interrupted_rip: usize,
+    pub interrupted_rbp: usize,
+}
+
+impl InterruptUnwindContext {
+    /// Checks if this context has a valid magic number.
+    pub fn is_valid(&self) -> bool {
+        self.magic == INTERRUPT_UNWIND_MAGIC
+    }
+}
+
+/// Attempts to find an InterruptUnwindContext on the stack given the frame pointer
+/// of the common_interrupt function.
+///
+/// Scans a small range below RBP looking for the magic number.
+pub fn find_interrupt_unwind_context(
+    common_interrupt_rbp: usize,
+) -> Option<InterruptUnwindContext> {
+    // Scan middle-out from 0x128 below RBP, which is where the context is typically found.
+    const EXPECTED_OFFSET: usize = 0x128;
+    const SCAN_RANGE: usize = 512;
+    const STEP: usize = core::mem::size_of::<usize>();
+    const MAX_STEPS: usize = SCAN_RANGE / STEP;
+
+    let start_addr = common_interrupt_rbp.wrapping_sub(EXPECTED_OFFSET);
+
+    for i in 0..MAX_STEPS {
+        // Alternate between scanning below and above the expected offset
+        let offset = (i / 2) * STEP;
+        let addr = if i % 2 == 0 {
+            start_addr.wrapping_sub(offset)
+        } else {
+            start_addr.wrapping_add(offset)
+        };
+
+        let candidate = unsafe { &*(addr as *const InterruptUnwindContext) };
+        if candidate.is_valid() {
+            return Some(*candidate);
+        }
+    }
+
+    None
+}
+
+// Linker symbols marking the bounds of the interrupt handlers section.
+unsafe extern "C" {
+    static __interrupt_handlers_start: u8;
+    static __interrupt_handlers_end: u8;
+}
+
+/// Returns the address range of the interrupt handlers section.
+pub fn interrupt_handlers_range() -> (usize, usize) {
+    unsafe {
+        (
+            &__interrupt_handlers_start as *const _ as usize,
+            &__interrupt_handlers_end as *const _ as usize,
+        )
+    }
+}
+
+/// Checks if an address is within the interrupt handlers section.
+pub fn is_in_interrupt_handler(addr: usize) -> bool {
+    let (start, end) = interrupt_handlers_range();
+    addr >= start && addr < end
+}
+
 /// Returns true if the given address is in user space (lower half).
 ///
 /// On x86_64, user space occupies the lower half of the virtual address space
@@ -115,13 +194,31 @@ pub fn init() {
     idt().load();
 }
 
+/// Common interrupt handler called by all interrupt stubs.
+///
+/// The unwinder detects this function by address and finds the
+/// InterruptUnwindContext on the stack by scanning for the magic number.
+#[inline(never)]
+#[unsafe(link_section = ".interrupt_handlers")]
 fn common_interrupt(stack_frame: InterruptStackFrame, vector: u8, error_code: Option<u64>) {
+    // Place the unwind context as the first local variable.
+    // The unwinder will find this by scanning below our RBP for the magic number.
+    //
+    // The x86-interrupt handler saved RBP in its prologue - that value is the
+    // interrupted code's RBP, which we need to continue unwinding.
+    let interrupted_rbp: usize;
+    unsafe {
+        core::arch::asm!("mov {}, [rbp]", out(reg) interrupted_rbp, options(nostack, readonly));
+    }
+
+    // Build and dispatch the interrupt context.
+    let ip = stack_frame.instruction_pointer.as_u64() as usize;
     let state = InterruptState {
         stack_frame,
         error_code,
     };
-    let vector = InterruptVector::new(vector);
-    let kind = match vector {
+    let interrupt_vector = InterruptVector::new(vector);
+    let kind = match interrupt_vector {
         InterruptVector::PAGE_FAULT => {
             let faulting_address = x86_64::registers::control::Cr2::read()
                 .ok()
@@ -130,7 +227,17 @@ fn common_interrupt(stack_frame: InterruptStackFrame, vector: u8, error_code: Op
         }
         _ => InterruptKind::Standard,
     };
-    interrupt_was_received(InterruptContext::new(vector, state, kind));
+
+    // Use black_box to ensure the compiler doesn't optimize away this local.
+    // The unwinder needs to find it on the stack.
+    let _unwind_context = core::hint::black_box(InterruptUnwindContext {
+        magic: INTERRUPT_UNWIND_MAGIC,
+        vector,
+        interrupted_rip: ip,
+        interrupted_rbp,
+    });
+    log::trace!("created InterruptUnwindContext at: {:p}", &_unwind_context);
+    interrupt_was_received(InterruptContext::new(interrupt_vector, state, kind));
 }
 
 crate::interrupt_vectors! {

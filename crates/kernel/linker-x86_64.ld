@@ -20,6 +20,10 @@ SECTIONS
         __kernel_text_start = .;
         *(.text .text.*)
         __kernel_text_end = .;
+
+        __interrupt_handlers_start = .;
+        *(.interrupt_handlers)
+        __interrupt_handlers_end = .;
     } :text
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));

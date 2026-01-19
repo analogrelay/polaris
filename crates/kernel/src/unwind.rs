@@ -1,22 +1,36 @@
 use crate::{
-    arch,
+    arch::{
+        self,
+        x86_64::{find_interrupt_unwind_context, is_in_interrupt_handler},
+    },
     modules::{Module, ModuleName},
 };
 use symbolicator::SymbolTable;
 
+/// Raw stack frame as laid out in memory by the compiler.
+#[repr(C)]
 #[derive(Debug, Clone, Copy)]
-struct StackFrame {
-    caller: *const StackFrame,
+struct RawStackFrame {
+    caller: usize,
     return_address: usize,
 }
 
-fn is_valid_stack_frame(frame_ptr: *const StackFrame) -> bool {
-    if frame_ptr.is_null() {
+/// Represents a frame in the call stack during unwinding.
+#[derive(Debug, Clone, Copy)]
+enum StackFrame {
+    /// A normal function call frame.
+    Call { return_address: usize },
+    /// A synthetic frame representing an interrupt boundary.
+    Interrupt { vector: u8, interrupted_rip: usize },
+}
+
+fn is_valid_frame_pointer(ptr: usize) -> bool {
+    if ptr == 0 {
         return false;
     }
 
     // Check alignment
-    if (frame_ptr as usize) % core::mem::align_of::<usize>() != 0 {
+    if ptr % core::mem::align_of::<usize>() != 0 {
         return false;
     }
 
@@ -33,16 +47,16 @@ fn load_symbol_table() -> Option<SymbolTable<'static>> {
 pub fn walk_stack(max_depth: usize) {
     let symtab = load_symbol_table();
 
-    let mut rbp: *const StackFrame;
+    let mut rbp: usize;
     unsafe {
         core::arch::asm!("mov {}, rbp", out(reg) rbp);
     }
 
     let mut depth = 0;
-    let mut prev_rbp = core::ptr::null();
+    let mut prev_rbp = 0usize;
 
     while depth < max_depth {
-        if !is_valid_stack_frame(rbp) {
+        if !is_valid_frame_pointer(rbp) {
             return;
         }
 
@@ -50,38 +64,74 @@ pub fn walk_stack(max_depth: usize) {
             return;
         }
 
-        let frame = unsafe { *rbp };
+        let raw_frame = unsafe { *(rbp as *const RawStackFrame) };
 
-        if frame.return_address == 0 {
-            return;
-        }
-
-        const KERNEL_START: usize = 0xffffffff80000000;
-        const KERNEL_MAX: usize = 0xffffffff81000000;
-
-        if frame.return_address < KERNEL_START || frame.return_address >= KERNEL_MAX {
-            return;
-        }
-
-        // Subtract 1 from return address to point inside the call instruction
-        // rather than the instruction after it.
-        let call_site = frame.return_address - 1;
-
-        if let Some(info) = symtab.as_ref().and_then(|s| s.lookup(call_site as u64)) {
-            log::error!(
-                "  #{}: {:#x} - {} at {}:{}",
-                depth,
-                call_site,
-                info.function_name,
-                info.source_file,
-                info.line
-            );
+        // Check if the return address is within the interrupt handlers section
+        let (frame, next_rbp) = if is_in_interrupt_handler(raw_frame.return_address) {
+            // We're returning into an interrupt handler - this means we crossed an interrupt boundary.
+            // The caller RBP is common_interrupt's frame pointer. Scan its stack for the unwind context.
+            if let Some(ctx) = find_interrupt_unwind_context(raw_frame.caller) {
+                let frame = StackFrame::Interrupt {
+                    vector: ctx.vector,
+                    interrupted_rip: ctx.interrupted_rip,
+                };
+                // Continue walking from the interrupted code's RBP
+                (frame, ctx.interrupted_rbp)
+            } else {
+                log::trace!(
+                    "no InterruptUnwindContext found when unwinding from interrupt handler return address {:#x}",
+                    raw_frame.return_address
+                );
+                // No valid context found, stop unwinding
+                return;
+            }
         } else {
-            log::error!("  #{}: {:#x}", depth, call_site);
+            if raw_frame.return_address == 0 {
+                return;
+            }
+
+            const KERNEL_START: usize = 0xffffffff80000000;
+            const KERNEL_MAX: usize = 0xffffffff81000000;
+
+            if raw_frame.return_address < KERNEL_START || raw_frame.return_address >= KERNEL_MAX {
+                return;
+            }
+
+            let frame = StackFrame::Call {
+                return_address: raw_frame.return_address,
+            };
+            (frame, raw_frame.caller)
+        };
+
+        // Log the frame
+        match frame {
+            StackFrame::Call { return_address } => {
+                // Subtract 1 from return address to point inside the call instruction
+                let call_site = return_address - 1;
+
+                if let Some(info) = symtab.as_ref().and_then(|s| s.lookup(call_site as u64)) {
+                    log::error!(
+                        "  #{:02}: {:#x} - {} at {}:{}",
+                        depth,
+                        call_site,
+                        info.function_name,
+                        info.source_file,
+                        info.line
+                    );
+                } else {
+                    log::error!("  #{:02}: {:#x}", depth, call_site);
+                }
+            }
+            StackFrame::Interrupt {
+                vector,
+                interrupted_rip,
+            } => {
+                log::error!("  #{:02}: <interrupt vector={}>", depth, vector,);
+            }
         }
 
         prev_rbp = rbp;
-        rbp = frame.caller;
+        rbp = next_rbp;
         depth += 1;
     }
 }
@@ -109,16 +159,19 @@ pub fn handle_panic(info: &core::panic::PanicInfo) -> ! {
 #[inline(never)]
 pub fn test() -> ! {
     #[inline(never)]
-    fn panic_time() -> ! {
+    fn panic_time() {
         log::debug!("about to panic");
-        panic!("This is a test panic for stack unwinding");
+
+        // Trigger a breakpoint interrupt to cause a panic in an interrupt handler
+        x86_64::instructions::interrupts::int3();
     }
 
     #[inline(never)]
-    fn nested() -> ! {
+    fn nested() {
         log::debug!("in nested function");
         panic_time();
     }
 
     nested();
+    arch::park();
 }
