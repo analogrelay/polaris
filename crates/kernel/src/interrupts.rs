@@ -1,8 +1,10 @@
+use alloc::collections::LinkedList;
+
 use pmm::VirtualAddress;
 
 use crate::arch;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InterruptContext {
     vector: arch::InterruptVector,
     state: arch::InterruptState,
@@ -20,6 +22,11 @@ impl InterruptContext {
             state,
             kind,
         }
+    }
+
+    /// Returns the interrupt vector.
+    pub fn vector(&self) -> arch::InterruptVector {
+        self.vector
     }
 
     /// Returns the instruction pointer at the time of the interrupt.
@@ -43,7 +50,7 @@ impl InterruptContext {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum InterruptKind {
     Standard,
     PageFault {
@@ -51,9 +58,29 @@ pub enum InterruptKind {
     },
 }
 
+static INTERRUPT_CONTEXT_CHAIN: spin::Mutex<LinkedList<InterruptContext>> =
+    spin::Mutex::new(LinkedList::new());
+
+pub fn current_interrupt_context() -> Option<InterruptContext> {
+    INTERRUPT_CONTEXT_CHAIN.lock().front().cloned()
+}
+
+pub fn take_current_interrupt_context() -> Option<InterruptContext> {
+    INTERRUPT_CONTEXT_CHAIN.lock().pop_front()
+}
+
 pub fn interrupt_was_received(context: InterruptContext) {
+    if crate::mem::can_allocate() {
+        // Store the interrupt context in a global, chained with the previous one.
+        INTERRUPT_CONTEXT_CHAIN.lock().push_front(context.clone());
+    }
+
     log::trace!("interrupt received: {:?}", context);
-    panic!("Unhandled interrupt");
+
+    panic!("interrupt handling not yet implemented");
+    // let state = UnwindState::for_interrupt(context);
+    // crate::unwind::unwind_stack(state);
+    // arch::park();
 }
 
 #[macro_export]

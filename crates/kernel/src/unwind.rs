@@ -1,41 +1,15 @@
 use crate::{
-    arch::{
-        self,
-        x86_64::{find_interrupt_unwind_context, is_in_interrupt_handler},
-    },
+    arch,
+    image::LinkerSection,
+    interrupts::{self, InterruptContext},
+    mem::MemoryArea,
     modules::{Module, ModuleName},
 };
+use gimli::{
+    BaseAddresses, CfaRule, EhFrame, EhFrameHdr, EndianSlice, NativeEndian, ParsedEhFrameHdr,
+    UnwindContext, UnwindSection,
+};
 use symbolicator::SymbolTable;
-
-/// Raw stack frame as laid out in memory by the compiler.
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-struct RawStackFrame {
-    caller: usize,
-    return_address: usize,
-}
-
-/// Represents a frame in the call stack during unwinding.
-#[derive(Debug, Clone, Copy)]
-enum StackFrame {
-    /// A normal function call frame.
-    Call { return_address: usize },
-    /// A synthetic frame representing an interrupt boundary.
-    Interrupt { vector: u8, interrupted_rip: usize },
-}
-
-fn is_valid_frame_pointer(ptr: usize) -> bool {
-    if ptr == 0 {
-        return false;
-    }
-
-    // Check alignment
-    if ptr % core::mem::align_of::<usize>() != 0 {
-        return false;
-    }
-
-    true
-}
 
 fn load_symbol_table() -> Option<SymbolTable<'static>> {
     let module = Module::get(ModuleName::DEBUG_SYMBOLS)?;
@@ -43,116 +17,65 @@ fn load_symbol_table() -> Option<SymbolTable<'static>> {
     SymbolTable::from_bytes(data).ok()
 }
 
-/// Walks the stack and logs each frame with symbolicated information.
-pub fn walk_stack(max_depth: usize) {
-    let symtab = load_symbol_table();
-
-    let mut rbp: usize;
-    unsafe {
-        core::arch::asm!("mov {}, rbp", out(reg) rbp);
-    }
-
-    let mut depth = 0;
-    let mut prev_rbp = 0usize;
-
-    while depth < max_depth {
-        if !is_valid_frame_pointer(rbp) {
-            return;
-        }
-
-        if rbp == prev_rbp {
-            return;
-        }
-
-        let raw_frame = unsafe { *(rbp as *const RawStackFrame) };
-
-        // Check if the return address is within the interrupt handlers section
-        let (frame, next_rbp) = if is_in_interrupt_handler(raw_frame.return_address) {
-            // We're returning into an interrupt handler - this means we crossed an interrupt boundary.
-            // The caller RBP is common_interrupt's frame pointer. Scan its stack for the unwind context.
-            if let Some(ctx) = find_interrupt_unwind_context(raw_frame.caller) {
-                let frame = StackFrame::Interrupt {
-                    vector: ctx.vector,
-                    interrupted_rip: ctx.interrupted_rip,
-                };
-                // Continue walking from the interrupted code's RBP
-                (frame, ctx.interrupted_rbp)
-            } else {
-                log::trace!(
-                    "no InterruptUnwindContext found when unwinding from interrupt handler return address {:#x}",
-                    raw_frame.return_address
-                );
-                // No valid context found, stop unwinding
-                return;
-            }
+pub fn unwind_stack(state: arch::UnwindState) {
+    let eh_frame = unsafe { LinkerSection::EhFrame.as_bytes() };
+    let eh_frame_hdr = unsafe { LinkerSection::EhFrameHdr.as_bytes() };
+    let text_base = LinkerSection::Text.as_u64();
+    if eh_frame.is_empty() {
+        log::warn!("no .eh_frame section found for stack unwinding");
+    } else {
+        let mut bases = BaseAddresses::default()
+            .set_text(text_base)
+            .set_eh_frame(eh_frame.as_ptr() as u64);
+        let eh_frame = EhFrame::new(&eh_frame, NativeEndian);
+        let eh_frame_hdr = if eh_frame_hdr.is_empty() {
+            None
         } else {
-            if raw_frame.return_address == 0 {
-                return;
-            }
-
-            const KERNEL_START: usize = 0xffffffff80000000;
-            const KERNEL_MAX: usize = 0xffffffff81000000;
-
-            if raw_frame.return_address < KERNEL_START || raw_frame.return_address >= KERNEL_MAX {
-                return;
-            }
-
-            let frame = StackFrame::Call {
-                return_address: raw_frame.return_address,
-            };
-            (frame, raw_frame.caller)
+            bases = bases.set_eh_frame_hdr(eh_frame_hdr.as_ptr() as u64);
+            Some(gimli::EhFrameHdr::new(eh_frame_hdr, NativeEndian))
         };
-
-        // Log the frame
-        match frame {
-            StackFrame::Call { return_address } => {
-                // Subtract 1 from return address to point inside the call instruction
-                let call_site = return_address - 1;
-
-                if let Some(info) = symtab.as_ref().and_then(|s| s.lookup(call_site as u64)) {
+        let unwinder = StackUnwinder::for_current_frame(state, bases, eh_frame, eh_frame_hdr);
+        let symbol_table = load_symbol_table();
+        for frame in unwinder {
+            match frame {
+                StackFrame::Interrupt(context) => {
                     log::error!(
-                        "  #{:02}: {:#x} - {} at {}:{}",
-                        depth,
-                        call_site,
-                        info.function_name,
-                        info.source_file,
-                        info.line
+                        " at cpu interrupt, vector={}, error_code={:?}",
+                        context.vector(),
+                        context.error_code(),
                     );
-                } else {
-                    log::error!("  #{:02}: {:#x}", depth, call_site);
+                }
+                StackFrame::Standard {
+                    instruction_pointer,
+                } => {
+                    if let Some(symbol_table) = &symbol_table {
+                        if let Some(symbol) = symbol_table.lookup(instruction_pointer) {
+                            log::error!(
+                                " at {:#018x} {} ({}:{})",
+                                instruction_pointer,
+                                symbol.function_name,
+                                symbol.source_file,
+                                symbol.line,
+                            );
+                            continue;
+                        }
+                    }
+                    log::error!(" at {:#018x} <unknown>", instruction_pointer);
                 }
             }
-            StackFrame::Interrupt {
-                vector,
-                interrupted_rip,
-            } => {
-                log::error!("  #{:02}: <interrupt vector={}>", depth, vector,);
-            }
         }
-
-        prev_rbp = rbp;
-        rbp = next_rbp;
-        depth += 1;
     }
 }
 
-static PANICKING: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
-#[cfg(target_arch = "x86_64")]
-pub fn handle_panic(info: &core::panic::PanicInfo) -> ! {
-    if PANICKING.swap(true, core::sync::atomic::Ordering::SeqCst) {
-        log::error!("RECURSIVE PANIC: {}", info.message());
-        arch::park();
-    }
-
+pub fn handle_panic(info: &core::panic::PanicInfo, state: arch::UnwindState) -> ! {
     log::error!("PICNIC: {}", info.message());
     if let Some(location) = info.location() {
-        log::error!(" at {}", location);
+        log::error!(" at {}", location)
     }
 
-    log::error!("Stack trace:");
-    walk_stack(32);
+    unwind_stack(state);
 
+    log::error!("CPU parked");
     arch::park();
 }
 
@@ -161,9 +84,9 @@ pub fn test() -> ! {
     #[inline(never)]
     fn panic_time() {
         log::debug!("about to panic");
-
-        // Trigger a breakpoint interrupt to cause a panic in an interrupt handler
-        x86_64::instructions::interrupts::int3();
+        unsafe {
+            core::arch::asm!("int3");
+        }
     }
 
     #[inline(never)]
@@ -174,4 +97,165 @@ pub fn test() -> ! {
 
     nested();
     arch::park();
+}
+
+pub enum StackFrame {
+    Standard { instruction_pointer: u64 },
+    Interrupt(InterruptContext),
+}
+
+pub struct StackUnwinder {
+    state: arch::UnwindState,
+    bases: BaseAddresses,
+    ctx: UnwindContext<usize>,
+    eh_frame: EhFrame<EndianSlice<'static, NativeEndian>>,
+    eh_frame_hdr: Option<ParsedEhFrameHdr<EndianSlice<'static, gimli::LittleEndian>>>,
+    last_was_interrupt: bool,
+}
+
+impl StackUnwinder {
+    /// Creates a new unwinder for the current stack frame.
+    ///
+    /// This is never inlined so that we can skip this frame when unwinding.
+    /// This allows the [`next`] method to return the caller's frame.
+    #[inline(never)]
+    pub fn for_current_frame(
+        state: arch::UnwindState,
+        bases: BaseAddresses,
+        eh_frame: EhFrame<EndianSlice<'static, NativeEndian>>,
+        eh_frame_hdr: Option<EhFrameHdr<EndianSlice<'static, NativeEndian>>>,
+    ) -> Self {
+        let eh_frame_hdr = eh_frame_hdr
+            .map(|hdr| hdr.parse(&bases, (usize::BITS / 8) as u8).ok())
+            .flatten();
+        Self {
+            state,
+            bases,
+            ctx: UnwindContext::new(),
+            eh_frame,
+            eh_frame_hdr,
+            last_was_interrupt: false,
+        }
+    }
+}
+
+impl Iterator for StackUnwinder {
+    type Item = StackFrame;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.last_was_interrupt {
+            // The last thing we returned was the synthetic interrupt frame.
+            // So the state is pointing at the interrupted context and we can just return that.
+            self.last_was_interrupt = false;
+            return Some(StackFrame::Standard {
+                instruction_pointer: self.state.instruction_pointer(),
+            });
+        }
+
+        let ip = self.state.instruction_pointer();
+        if let Some(LinkerSection::InterruptHandlers) = LinkerSection::containing(ip.into()) {
+            // Try to pop an interrupt context
+            if let Some(context) = interrupts::take_current_interrupt_context() {
+                // Use the interrupt context to make the next frame
+                // Return an synthetic frame for the interrupt
+                self.state = arch::UnwindState::from_interrupt(context.clone());
+                self.last_was_interrupt = true;
+                return Some(StackFrame::Interrupt(context));
+            }
+
+            // no interrupt context found, halt unwinding
+            log::warn!("no interrupt context found during unwinding at {:#x}", ip,);
+            return None;
+        }
+        let Some(fde) = get_fde(&self.eh_frame, &self.eh_frame_hdr, &self.bases, ip) else {
+            log::warn!("no FDE found for address {:#x} during unwinding", ip,);
+            return None;
+        };
+        let Ok(unwind_row) = fde.unwind_info_for_address(
+            &self.eh_frame,
+            &self.bases,
+            &mut self.ctx,
+            self.state.instruction_pointer(),
+        ) else {
+            log::warn!(
+                "no unwind info found for address {:#x} during unwinding",
+                self.state.instruction_pointer()
+            );
+            return None;
+        };
+        let cfa = match unwind_row.cfa() {
+            CfaRule::RegisterAndOffset { register, offset } => self.state.cfa(*register, *offset),
+            x => {
+                log::warn!("unsupported CFA rule encountered during unwinding: {:?}", x);
+                return None;
+            }
+        };
+        let state = self.state.next_frame(cfa, &unwind_row);
+        if let Some(state) = state {
+            self.state = state;
+            Some(StackFrame::Standard {
+                instruction_pointer: self.state.instruction_pointer(),
+            })
+        } else {
+            None
+        }
+    }
+}
+
+fn get_fde(
+    eh_frame: &EhFrame<EndianSlice<'static, NativeEndian>>,
+    eh_frame_hdr: &Option<ParsedEhFrameHdr<EndianSlice<'static, NativeEndian>>>,
+    bases: &BaseAddresses,
+    address: u64,
+) -> Option<gimli::FrameDescriptionEntry<EndianSlice<'static, NativeEndian>, usize>> {
+    // Try the EH frame header first for faster lookups
+    if let Some(eh_frame_hdr) = eh_frame_hdr {
+        if let Some(table) = eh_frame_hdr.table() {
+            let ptr = match table.lookup(address, bases) {
+                Ok(ptr) => ptr,
+                Err(e) => {
+                    log::warn!(
+                        "error looking up FDE in .eh_frame_hdr for address {:#x}: {:?}",
+                        address,
+                        e
+                    );
+                    return None;
+                }
+            };
+            let offset = match table.pointer_to_offset(ptr) {
+                Ok(offset) => offset,
+                Err(e) => {
+                    log::warn!(
+                        "error converting pointer to offset in .eh_frame_hdr for address {:#x}: {:?}",
+                        address,
+                        e
+                    );
+                    return None;
+                }
+            };
+            let fde = match eh_frame.fde_from_offset(bases, offset, EhFrame::cie_from_offset) {
+                Ok(fde) => fde,
+                Err(e) => {
+                    log::warn!(
+                        "error loading FDE from .eh_frame for address {:#x}: {:?}",
+                        address,
+                        e
+                    );
+                    return None;
+                }
+            };
+            return Some(fde);
+        }
+    }
+
+    if let Ok(fde) = eh_frame.fde_for_address(bases, address, EhFrame::cie_from_offset) {
+        return Some(fde);
+    }
+
+    None
+}
+
+#[inline(always)]
+pub fn capture_unwind_state() -> arch::UnwindState {
+    arch::UnwindState::capture()
 }

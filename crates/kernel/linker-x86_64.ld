@@ -21,9 +21,9 @@ SECTIONS
         *(.text .text.*)
         __kernel_text_end = .;
 
-        __interrupt_handlers_start = .;
+        __kernel_interrupt_handlers_start = .;
         *(.interrupt_handlers)
-        __interrupt_handlers_end = .;
+        __kernel_interrupt_handlers_end = .;
     } :text
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
@@ -55,6 +55,18 @@ SECTIONS
         __kernel_bss_end = .;
     } :data
 
+    .eh_frame_hdr : {
+        __kernel_eh_frame_hdr_start = .;
+        KEEP(*(.eh_frame_hdr))
+        __kernel_eh_frame_hdr_end = .;
+    } :data
+
+    .eh_frame : {
+        __kernel_eh_frame_start = .;
+        KEEP(*(.eh_frame*))
+        __kernel_eh_frame_end = .;
+    } :data
+
     __kernel_end = .;
 
     /* Keep debug sections for symbol extraction */
@@ -71,7 +83,6 @@ SECTIONS
     .debug_line_str 0 : { *(.debug_line_str) }
 
     /DISCARD/ : {
-        *(.eh_frame*)
         *(.note .note.*)
     }
 }

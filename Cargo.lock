@@ -271,7 +271,7 @@ name = "polaris_kernel"
 version = "0.1.0"
 dependencies = [
  "acpi",
- "elf",
+ "gimli",
  "limine",
  "log",
  "noto-sans-mono-bitmap",

@@ -10,7 +10,7 @@
     "linker-flavor": "ld.lld",
     "linker": "rust-lld",
     "panic-strategy": "abort",
-    "frame-pointer": "always",
+    "requires-uwtable": true,
     "disable-redzone": true,
     "features": "-mmx,-sse,+soft-float",
     "rustc-abi": "x86-softfloat",

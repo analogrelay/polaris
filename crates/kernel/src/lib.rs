@@ -11,6 +11,7 @@ mod acpi;
 mod arch;
 mod console;
 mod framebuffer;
+mod image;
 mod interrupts;
 mod mem;
 mod modules;
@@ -19,7 +20,7 @@ mod unwind;
 
 use limine::BaseRevision;
 
-pub use unwind::handle_panic;
+pub use unwind::{capture_unwind_state, handle_panic};
 
 #[used]
 #[unsafe(link_section = ".requests")]

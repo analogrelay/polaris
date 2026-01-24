@@ -6,5 +6,6 @@
 #[cfg(not(test))]
 #[panic_handler]
 fn rust_panic(info: &core::panic::PanicInfo) -> ! {
-    polaris_kernel::handle_panic(info)
+    let state = polaris_kernel::capture_unwind_state();
+    polaris_kernel::handle_panic(info, state)
 }

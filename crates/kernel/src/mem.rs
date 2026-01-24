@@ -5,23 +5,9 @@ use limine::{
     memory_map::{self, Entry},
     request::{HhdmRequest, MemoryMapRequest, StackSizeRequest},
 };
-use pmm::{
-    BlockAllocator, BootMemoryRegion, HumanAddress, HumanSize, MemoryMap, PhysicalAddress,
-    VirtualAddress,
-};
+use pmm::{BlockAllocator, BootMemoryRegion, MemoryMap, PhysicalAddress, VirtualAddress};
 
-/// Represents a linker section in the kernel image.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinkerSection {
-    /// The `.text` section containing executable code.
-    Text,
-    /// The `.rodata` section containing read-only data.
-    ReadOnlyData,
-    /// The `.data` section containing initialized writable data.
-    Data,
-    /// The `.bss` section containing uninitialized writable data.
-    Bss,
-}
+use crate::image::LinkerSection;
 
 /// Represents a memory area classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,31 +52,8 @@ impl MemoryArea {
         }
 
         // Check linker sections
-        // SAFETY: Linker symbols are valid throughout the kernel's lifetime
-        unsafe {
-            let text_start = &__kernel_text_start as *const u8 as usize;
-            let text_end = &__kernel_text_end as *const u8 as usize;
-            if addr_val >= text_start && addr_val < text_end {
-                return MemoryArea::KernelImage(LinkerSection::Text);
-            }
-
-            let rodata_start = &__kernel_rodata_start as *const u8 as usize;
-            let rodata_end = &__kernel_rodata_end as *const u8 as usize;
-            if addr_val >= rodata_start && addr_val < rodata_end {
-                return MemoryArea::KernelImage(LinkerSection::ReadOnlyData);
-            }
-
-            let data_start = &__kernel_data_start as *const u8 as usize;
-            let data_end = &__kernel_data_end as *const u8 as usize;
-            if addr_val >= data_start && addr_val < data_end {
-                return MemoryArea::KernelImage(LinkerSection::Data);
-            }
-
-            let bss_start = &__kernel_bss_start as *const u8 as usize;
-            let bss_end = &__kernel_bss_end as *const u8 as usize;
-            if addr_val >= bss_start && addr_val < bss_end {
-                return MemoryArea::KernelImage(LinkerSection::Bss);
-            }
+        if let Some(section) = LinkerSection::containing(addr) {
+            return MemoryArea::KernelImage(section);
         }
 
         // If it's in the higher half but not in any specific region, it's other kernel memory
@@ -251,6 +214,10 @@ pub fn init_pmm() -> pmm::PhysicalMemoryManager {
     pmm
 }
 
+pub fn can_allocate() -> bool {
+    KERNEL_ALLOCATOR.can_allocate()
+}
+
 #[global_allocator]
 static KERNEL_ALLOCATOR: KernelAllocator = KernelAllocator {
     inner: spin::Mutex::new(InnerAllocator::None),
@@ -275,6 +242,13 @@ impl KernelAllocator {
     pub fn use_pmm(&self, pmm: pmm::PhysicalMemoryManager) {
         let mut inner = self.inner.lock();
         *inner = InnerAllocator::PhysicalMemoryManager(pmm);
+    }
+
+    pub fn can_allocate(&self) -> bool {
+        match &*self.inner.lock() {
+            InnerAllocator::None => false,
+            _ => true,
+        }
     }
 }
 
@@ -344,16 +318,4 @@ pub unsafe fn set_stack_bounds(stack_start: usize) {
         STACK_START = stack_start;
         STACK_END = stack_end;
     }
-}
-
-// External symbols from the linker script
-unsafe extern "C" {
-    static __kernel_text_start: u8;
-    static __kernel_text_end: u8;
-    static __kernel_rodata_start: u8;
-    static __kernel_rodata_end: u8;
-    static __kernel_data_start: u8;
-    static __kernel_data_end: u8;
-    static __kernel_bss_start: u8;
-    static __kernel_bss_end: u8;
 }

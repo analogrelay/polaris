@@ -62,13 +62,20 @@ build-kernel: _mk-artifacts-dir
         {{kernel-cargo-args}} \
         --package polaris_kernel
     nm --numeric-sort "target/{{kernel-target}}/{{profile-dir}}/polaris.kernel" | c++filt > artifacts/{{arch}}/polaris.kernel.nm
+    objdump -S "target/{{kernel-target}}/{{profile-dir}}/polaris.kernel" > artifacts/{{arch}}/polaris.kernel.asm
     cp "target/{{kernel-target}}/{{profile-dir}}/polaris.kernel" artifacts/{{arch}}/polaris.kernel
     cargo run --package symbolicator -- generate \
         --input artifacts/{{arch}}/polaris.kernel \
         --output artifacts/{{arch}}/polaris.symtab
+    strip --strip-debug artifacts/{{arch}}/polaris.kernel
 
 dump-kernel-elf: build-kernel
     readelf -a "artifacts/{{arch}}/polaris.kernel"
+
+# Clean build artifacts
+clean:
+    rm -rf artifacts/{{arch}} target/{{kernel-target}}
+    cargo clean
 
 # Create the artifacts directory if it doesn't exist
 _mk-artifacts-dir:

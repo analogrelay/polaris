@@ -33,12 +33,6 @@ impl Module {
         for module in modules {
             let name = ModuleName::new(module.string());
             if name == module_name {
-                log::trace!(
-                    "Found module {:?} at {:#x} (size: {} bytes)",
-                    name,
-                    module.addr() as usize,
-                    module.size()
-                );
                 return Some(Module {
                     base: module.addr() as usize,
                     size: module.size() as usize,
