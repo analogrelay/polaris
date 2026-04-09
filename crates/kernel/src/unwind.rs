@@ -13,8 +13,7 @@ use symbolicator::SymbolTable;
 
 fn load_symbol_table() -> Option<SymbolTable<'static>> {
     let module = Module::get(ModuleName::DEBUG_SYMBOLS)?;
-    let data = unsafe { core::slice::from_raw_parts(module.base as *const u8, module.size) };
-    SymbolTable::from_bytes(data).ok()
+    SymbolTable::from_bytes(module.data).ok()
 }
 
 pub fn unwind_stack(state: arch::UnwindState) {

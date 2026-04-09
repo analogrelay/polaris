@@ -2,8 +2,8 @@
 
 use core::ptr::NonNull;
 use limine::{
-    memory_map::{self, Entry},
-    request::{HhdmRequest, MemoryMapRequest, StackSizeRequest},
+    memmap::{self, Entry},
+    request::{HhdmRequest, MemmapRequest, StackSizeRequest},
 };
 use pmm::{BlockAllocator, BootMemoryRegion, MemoryMap, PhysicalAddress, VirtualAddress};
 
@@ -63,22 +63,22 @@ impl MemoryArea {
 
 #[used]
 #[unsafe(link_section = ".requests")]
-static MEMORY_MAP_REQUEST: MemoryMapRequest = MemoryMapRequest::new();
+static MEMORY_MAP_REQUEST: MemmapRequest = MemmapRequest::new();
 
 #[used]
 #[unsafe(link_section = ".requests")]
 static HIGHER_HALF_DIRECT_MAP: HhdmRequest = HhdmRequest::new();
 
-pub fn type_name(entry_type: memory_map::EntryType) -> &'static str {
+pub fn type_name(entry_type: u64) -> &'static str {
     match entry_type {
-        memory_map::EntryType::USABLE => "USABLE",
-        memory_map::EntryType::RESERVED => "RESERVED",
-        memory_map::EntryType::ACPI_RECLAIMABLE => "ACPI_RECLAIMABLE",
-        memory_map::EntryType::ACPI_NVS => "ACPI_NVS",
-        memory_map::EntryType::BAD_MEMORY => "BAD_MEMORY",
-        memory_map::EntryType::BOOTLOADER_RECLAIMABLE => "BOOTLOADER_RECLAIMABLE",
-        memory_map::EntryType::EXECUTABLE_AND_MODULES => "EXECUTABLE_AND_MODULES",
-        memory_map::EntryType::FRAMEBUFFER => "FRAMEBUFFER",
+        memmap::MEMMAP_USABLE => "USABLE",
+        memmap::MEMMAP_RESERVED => "RESERVED",
+        memmap::MEMMAP_ACPI_RECLAIMABLE => "ACPI_RECLAIMABLE",
+        memmap::MEMMAP_ACPI_NVS => "ACPI_NVS",
+        memmap::MEMMAP_BAD_MEMORY => "BAD_MEMORY",
+        memmap::MEMMAP_BOOTLOADER_RECLAIMABLE => "BOOTLOADER_RECLAIMABLE",
+        memmap::MEMMAP_EXECUTABLE_AND_MODULES => "EXECUTABLE_AND_MODULES",
+        memmap::MEMMAP_FRAMEBUFFER => "FRAMEBUFFER",
         _ => "UNKNOWN",
     }
 }
@@ -109,7 +109,7 @@ impl BootMemoryRegion for LimineMemoryRegion<'_> {
     }
 
     fn is_usable(&self) -> bool {
-        self.0.entry_type == memory_map::EntryType::USABLE
+        self.0.type_ == memmap::MEMMAP_USABLE
     }
 }
 
@@ -119,21 +119,21 @@ impl BootMemoryRegion for LimineMemoryRegion<'_> {
 /// usable regions added and all non-usable regions reserved.
 pub fn init_allocator() {
     let direct_offset = HIGHER_HALF_DIRECT_MAP
-        .get_response()
+        .response()
         .expect("Higher-half direct map request should have been answered")
-        .offset();
+        .offset;
     pmm::AddressTranslator::set_current(pmm::AddressTranslator::hardware(direct_offset as usize));
 
     let boot_memmap = MEMORY_MAP_REQUEST
-        .get_response()
+        .response()
         .expect("Memory map request should have been answered")
         .entries();
 
     let mut allocator = BlockAllocator::new();
     for entry in boot_memmap {
         let start = PhysicalAddress::new(entry.base as usize);
-        match entry.entry_type {
-            memory_map::EntryType::USABLE => {
+        match entry.type_ {
+            memmap::MEMMAP_USABLE => {
                 allocator
                     .add(start, entry.length as usize)
                     .expect("Failed to add memory region to block allocator");
@@ -160,9 +160,18 @@ pub fn use_pmm(pmm: pmm::PhysicalMemoryManager) {
 /// and all usable regions freed into the allocator.
 pub fn init_pmm() -> pmm::PhysicalMemoryManager {
     let boot_memmap = MEMORY_MAP_REQUEST
-        .get_response()
+        .response()
         .expect("Memory map request should have been answered")
         .entries();
+
+    for entry in boot_memmap {
+        log::debug!(
+            "mem: base={:x} size={} type={}",
+            entry.base,
+            entry.length,
+            type_name(entry.type_)
+        )
+    }
 
     // Wrap the boot memory map entries without allocation
     let wrapped_entries = LimineMemoryRegion::wrap_slice(boot_memmap);
@@ -185,7 +194,7 @@ pub fn init_pmm() -> pmm::PhysicalMemoryManager {
     let max_block_size = (1u64 << MAX_ORDER) * PAGE_SIZE;
 
     for entry in boot_memmap.iter() {
-        if entry.entry_type == memory_map::EntryType::USABLE {
+        if entry.type_ == memmap::MEMMAP_USABLE {
             let mut addr = entry.base;
             let end = entry.base + entry.length;
 
@@ -307,12 +316,14 @@ unsafe impl alloc::alloc::GlobalAlloc for KernelAllocator {
 static mut STACK_START: usize = 0;
 static mut STACK_END: usize = 0;
 
+const STACK_SIZE: usize = 65536;
+
 #[used]
 #[unsafe(link_section = ".requests")]
-static STACK_SIZE: StackSizeRequest = StackSizeRequest::new().with_size(65536); // 64 KiB stack
+static STACK_SIZE_REQ: StackSizeRequest = StackSizeRequest::new(STACK_SIZE as u64);
 
 pub unsafe fn set_stack_bounds(stack_start: usize) {
-    let stack_end = stack_start + STACK_SIZE.size() as usize;
+    let stack_end = stack_start + STACK_SIZE;
     // SAFETY: This function must only be called once during kernel initialization.
     unsafe {
         STACK_START = stack_start;

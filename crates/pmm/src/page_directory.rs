@@ -47,19 +47,68 @@ fn alloc_page_table() -> *mut PageTable {
 
 /// An architecture-independent page table manager.
 ///
-/// This type owns the root page table and provides operations for mapping and unmapping
+/// This type manages a root page table and provides operations for mapping and unmapping
 /// virtual addresses to physical addresses. It handles walking the page table hierarchy
 /// and allocating intermediate tables as needed.
+///
+/// The root page table may be owned (heap-allocated, freed on drop) or borrowed
+/// (pointing to existing page tables, e.g. those set up by the bootloader).
 pub struct PageDirectory {
-    /// The root page table for this address space.
-    root: PageTable,
+    /// Raw pointer to the root page table.
+    ///
+    /// When `owns_root` is true, this was allocated via `alloc_page_table()` and must
+    /// be freed on drop. When false, this points to existing page tables (e.g. Limine's
+    /// boot-time PML4) and must NOT be freed.
+    root: *mut PageTable,
+    /// Whether this directory owns the root page table allocation.
+    owns_root: bool,
+}
+
+// SAFETY: PageDirectory is used exclusively in single-threaded kernel init code.
+unsafe impl Send for PageDirectory {}
+unsafe impl Sync for PageDirectory {}
+
+impl Drop for PageDirectory {
+    fn drop(&mut self) {
+        // In test/software-emulation mode, emulated memory has no individual free operation.
+        #[cfg(not(any(test, feature = "software-emulation")))]
+        if self.owns_root {
+            // SAFETY: alloc_page_table() used Box::into_raw; reclaim with Box::from_raw.
+            unsafe { drop(Box::from_raw(self.root)) };
+        }
+    }
 }
 
 impl PageDirectory {
     /// Creates a new page directory with an empty root page table.
     pub fn new() -> Self {
         Self {
-            root: PageTable::new(),
+            root: alloc_page_table(),
+            owns_root: true,
+        }
+    }
+
+    /// Creates a `PageDirectory` wrapping the currently-active page tables.
+    ///
+    /// The root page table is read from CR3 and referenced non-owingly — it will not be
+    /// freed when this `PageDirectory` is dropped. Use this to extend the mappings
+    /// that were set up by the bootloader (e.g. to add MMIO regions absent from the HHDM).
+    ///
+    /// # Safety
+    /// Must be called after `AddressTranslator::set_current()` (i.e. after
+    /// `mem::init_allocator()`). The active page tables must be valid and properly
+    /// mapped in the HHDM.
+    #[cfg(target_arch = "x86_64")]
+    pub unsafe fn from_active_tables() -> Self {
+        use x86_64::registers::control::Cr3;
+        let (frame, _) = Cr3::read();
+        let phys = frame.start_address().as_u64() as usize;
+        let virt = AddressTranslator::current().phys_to_virt(phys);
+        Self {
+            // SAFETY: PageTable is repr(transparent) over x86_64::structures::paging::PageTable,
+            // so a *mut PageTable pointing at an HHDM-mapped physical PML4 is valid.
+            root: virt as *mut PageTable,
+            owns_root: false,
         }
     }
 
@@ -113,7 +162,8 @@ impl PageDirectory {
     ///
     /// Returns None if any intermediate table is not present.
     fn walk(&mut self, virt: VirtualAddress) -> Option<&mut PageEntry> {
-        let mut table = &mut self.root;
+        // SAFETY: root is a valid PageTable pointer (either owned or borrowed from Limine).
+        let mut table = unsafe { &mut *self.root };
         let virt_addr = virt.as_usize();
 
         // Walk through all levels except the last
@@ -130,9 +180,10 @@ impl PageDirectory {
             let translator = AddressTranslator::current();
             let next_table_virt_raw = translator.phys_to_virt(next_table_phys.as_usize());
 
-            // SAFETY: We're trusting that the page table entry contains a valid pointer
-            // to a page table. This is safe as long as we only create entries that
-            // point to valid page tables.
+            // SAFETY: The entry contains a valid physical address of a page table.
+            // PageTable is repr(transparent) over the 512-entry array, so casting the
+            // HHDM virtual address to *mut PageTable is correct for both Limine-allocated
+            // and kernel-allocated sub-tables.
             table = unsafe { &mut *(next_table_virt_raw as *mut PageTable) };
         }
 
@@ -145,7 +196,8 @@ impl PageDirectory {
     /// Returns a mutable reference to the final page table entry for the given
     /// virtual address.
     fn walk_or_create(&mut self, virt: VirtualAddress) -> &mut PageEntry {
-        let mut table = &mut self.root;
+        // SAFETY: root is a valid PageTable pointer (either owned or borrowed from Limine).
+        let mut table = unsafe { &mut *self.root };
         let virt_addr = virt.as_usize();
 
         // Walk through all levels except the last
@@ -154,7 +206,10 @@ impl PageDirectory {
             let entry = table.entry_mut(index);
 
             if !entry.is_present() {
-                // Allocate a new page table
+                // Allocate a new page table.
+                // alloc_page_table() returns a *mut PageTable pointing to a zeroed,
+                // page-aligned allocation whose physical address (via virt_to_phys) is
+                // the address the CPU will use to walk the hierarchy.
                 let new_table_ptr = alloc_page_table();
                 let new_table_virt_raw = new_table_ptr as usize;
 
@@ -164,6 +219,9 @@ impl PageDirectory {
 
                 let mut flags = PageFlags::empty();
                 flags.set_present(true);
+                // Intermediate entries must be writable for writes to propagate through the
+                // hierarchy; x86_64 CR0.WP enforces the writable bit at every level.
+                flags.set_writable(true);
 
                 *entry = PageEntry::new(new_table_phys, flags);
             }
@@ -172,9 +230,9 @@ impl PageDirectory {
             let translator = AddressTranslator::current();
             let next_table_virt_raw = translator.phys_to_virt(next_table_phys.as_usize());
 
-            // SAFETY: We're trusting that the page table entry contains a valid pointer
-            // to a page table. This is safe because we either just created it above,
-            // or it was created by a previous call to this function.
+            // SAFETY: The entry contains a valid physical address of a page table.
+            // PageTable is repr(transparent) over the 512-entry array, so this cast is correct
+            // for both Limine-allocated and freshly-allocated sub-tables.
             table = unsafe { &mut *(next_table_virt_raw as *mut PageTable) };
         }
 

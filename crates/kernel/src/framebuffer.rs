@@ -1,9 +1,6 @@
 use core::{fmt, ptr};
 use font_constants::BACKUP_CHAR;
-use limine::{
-    framebuffer::{Framebuffer, MemoryModel},
-    request::FramebufferRequest,
-};
+use limine::{framebuffer::Framebuffer, request::FramebufferRequest};
 use noto_sans_mono_bitmap::{
     FontWeight, RasterHeight, RasterizedChar, get_raster, get_raster_width,
 };
@@ -59,7 +56,7 @@ pub struct FrameBufferWriter {
     x_pos: usize,
     y_pos: usize,
     bpp: usize,
-    memory_model: MemoryModel,
+    memory_model: u8,
     pitch: usize,
     width: usize,
     height: usize,
@@ -67,20 +64,20 @@ pub struct FrameBufferWriter {
 
 impl FrameBufferWriter {
     /// Creates a new logger that uses the given framebuffer.
-    pub fn new(info: Framebuffer) -> Self {
+    pub fn new(info: &Framebuffer) -> Self {
         let framebuffer = unsafe {
             core::slice::from_raw_parts_mut(
-                info.addr() as *mut u8,
-                (info.pitch() * info.height()) as usize,
+                info.address() as *mut u8,
+                (info.pitch * info.height) as usize,
             )
         };
         let mut logger = Self {
             framebuffer,
-            pitch: info.pitch() as usize,
-            bpp: info.bpp() as usize,
-            memory_model: info.memory_model(),
-            width: info.width() as usize,
-            height: info.height() as usize,
+            pitch: info.pitch as usize,
+            bpp: info.bpp as usize,
+            memory_model: info.memory_model,
+            width: info.width as usize,
+            height: info.height as usize,
             x_pos: 0,
             y_pos: 0,
         };
@@ -144,7 +141,7 @@ impl FrameBufferWriter {
     fn write_pixel(&mut self, x: usize, y: usize, intensity: u8) {
         let pixel_offset = y * self.stride() as usize + x;
         let color = match self.memory_model {
-            MemoryModel::RGB => [intensity, intensity, intensity / 2, 0],
+            limine::framebuffer::FRAMEBUFFER_RGB => [intensity, intensity, intensity / 2, 0],
             _ => {
                 panic!("pixel format not supported");
             }
@@ -171,16 +168,19 @@ impl fmt::Write for FrameBufferWriter {
 
 pub fn init(console: &Console) {
     let fb_info = FRAMEBUFFER_REQUEST
-        .get_response()
+        .response()
         .expect("framebuffer request should have been answered");
-    let framebuffer = fb_info.framebuffers().next().expect("no framebuffer found");
+    let framebuffer = *fb_info
+        .framebuffers()
+        .get(0)
+        .expect("expected at least one framebuffer");
     log::trace!(
         "framebuffer at {}: {}x{} @ {}bpp, pitch: {}",
-        VirtualAddress::from_ptr(framebuffer.addr()),
-        framebuffer.width(),
-        framebuffer.height(),
-        framebuffer.bpp(),
-        framebuffer.pitch(),
+        VirtualAddress::from_ptr(framebuffer.address()),
+        framebuffer.width,
+        framebuffer.height,
+        framebuffer.bpp,
+        framebuffer.pitch,
     );
     let fb_writer = FrameBufferWriter::new(framebuffer);
     console.attach_framebuffer(fb_writer);

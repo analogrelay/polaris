@@ -17,22 +17,19 @@ const ENTRY_COUNT: usize = 512;
 
 /// A page table for x86_64 architecture.
 ///
-/// This represents a single level in the page table hierarchy. On x86_64 with
-/// 4-level paging, there are four levels: PML4 (level 3), PDPT (level 2),
-/// PD (level 1), and PT (level 0).
-pub struct PageTable {
-    /// The underlying page table from the x86_64 crate.
-    inner: Box<x86_64::structures::paging::PageTable>,
-}
+/// This is a transparent newtype over [`x86_64::structures::paging::PageTable`], so a pointer
+/// to `PageTable` is always a pointer to the actual 4096-byte array of page table entries.
+/// This property is required for correct interaction with the CPU's page-table walker and for
+/// safely casting HHDM-mapped physical page table addresses to `*mut PageTable`.
+#[repr(transparent)]
+pub struct PageTable(x86_64::structures::paging::PageTable);
 
 impl PageTable {
     /// Creates a new, empty page table.
     ///
     /// All entries are initialized to zero (not present).
     pub fn new() -> Self {
-        Self {
-            inner: Box::new(x86_64::structures::paging::PageTable::new()),
-        }
+        Self(x86_64::structures::paging::PageTable::new())
     }
 
     /// Returns a reference to the entry at the given index.
@@ -42,7 +39,7 @@ impl PageTable {
     pub fn entry(&self, index: usize) -> PageEntry {
         assert!(index < ENTRY_COUNT, "page table index out of bounds");
         PageEntry::from(
-            self.inner[index].addr().as_u64() as usize | self.inner[index].flags().bits() as usize,
+            self.0[index].addr().as_u64() as usize | self.0[index].flags().bits() as usize,
         )
     }
 
@@ -52,9 +49,9 @@ impl PageTable {
     /// Panics if index >= 512.
     pub fn entry_mut(&mut self, index: usize) -> &mut PageEntry {
         assert!(index < ENTRY_COUNT, "page table index out of bounds");
-        // SAFETY: We're reinterpreting the page table entry as our PageEntry type.
-        // Both are 64-bit values with the same layout.
-        unsafe { &mut *(&mut self.inner[index] as *mut _ as *mut PageEntry) }
+        // SAFETY: PageEntry and x86_64::PageTableEntry are both 64-bit values with the same
+        // physical-address | flags layout.
+        unsafe { &mut *(&mut self.0[index] as *mut _ as *mut PageEntry) }
     }
 
     /// Returns the number of entries in this page table.
@@ -67,12 +64,8 @@ impl PageTable {
     /// This is the address that would be stored in a parent page table entry
     /// or loaded into CR3.
     pub fn physical_address(&self) -> PhysicalAddress {
-        // We need to translate the virtual address of this table to a physical address.
-        // This requires the address translator.
-        let ptr = &self.inner[0] as *const _ as *const u8;
-        let virt_addr = VirtualAddress::new(ptr as usize);
-        let translator = AddressTranslator::current();
-        PhysicalAddress::new(translator.virt_to_phys(virt_addr.as_usize()))
+        let virt = self as *const Self as usize;
+        PhysicalAddress::new(AddressTranslator::current().virt_to_phys(virt))
     }
 
     /// Activates this page table by loading it into CR3.
@@ -91,16 +84,6 @@ impl PageTable {
         unsafe {
             Cr3::write(frame, Cr3Flags::empty());
         }
-    }
-
-    /// Returns a reference to the inner x86_64 page table.
-    pub fn inner(&self) -> &x86_64::structures::paging::PageTable {
-        &self.inner
-    }
-
-    /// Returns a mutable reference to the inner x86_64 page table.
-    pub fn inner_mut(&mut self) -> &mut x86_64::structures::paging::PageTable {
-        &mut self.inner
     }
 }
 

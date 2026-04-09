@@ -38,4 +38,4 @@ pub use numbers::{FrameNumber, PageNumber};
 pub use page_directory::PageDirectory;
 pub use physical_memory_manager::PhysicalMemoryManager;
 
-pub use arch::PAGE_SIZE;
+pub use arch::{PAGE_SIZE, PageFlags};

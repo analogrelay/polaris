@@ -18,14 +18,11 @@ spin.workspace = true
 uart_16550.workspace = true
 pmm.workspace = true
 symbolicator.workspace = true
-acpi = { workspace = true, optional = true }
 gimli = { version = "0.32.3", default-features = false, features = ["endian-reader", "read"] }
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 x86_64 = "0.15.4"
 
 [features]
-default = ["acpi"]
-acpi = ["dep:acpi"]
+default = []
 detailed-logging = []
-

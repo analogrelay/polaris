@@ -2,6 +2,7 @@
 
 # Default architecture for the kernel. Intended to be overridden at command line if needed.
 arch := "x86_64"
+qemu-arch-args := if arch == "x86_64" { "-machine q35" } else { error("Unsupported architecture: {{arch}}") }
 
 # Build profile: "dev" or "release". Intended to be overridden at command line if needed.
 profile := "dev"
@@ -9,6 +10,7 @@ profile := "dev"
 # Values derived from the architecture
 kernel-target := arch + "-polaris-kernel"
 limine-image-name := if arch == "x86_64" { "BOOTX64.EFI" } else { error("Unsupported architecture: {{arch}}") }
+limine-dir := env("LIMINE_DIR", "vendor/limine")
 
 # Other constants
 build-std := "core,alloc,compiler_builtins"
@@ -16,6 +18,8 @@ build-std-features := "compiler-builtins-mem"
 profile-dir := if profile == "release" { "release" } else { "debug" }
 release-flag := if profile == "release" { "--release" } else { "" }
 kernel-cargo-args := "-Z build-std=" + build-std + " -Z build-std-features=" + build-std-features + " --target " + kernel-target + " " + release-flag
+
+export RUSTFLAGS := "-Zunstable-options"
 
 # Default task: build the full OS image
 build: build-image
@@ -34,6 +38,7 @@ test:
 # Launch the kernel in QEMU with the debugger stub enabled
 monitor *FLAGS: build-image
     qemu-system-{{arch}} \
+        {{qemu-arch-args}} \
         -m 512M \
         -drive file=artifacts/{{arch}}/polaris.img,format=raw,if=virtio \
         -bios $OVMF_DIR/ovmf-code-{{arch}}.fd \
@@ -43,6 +48,7 @@ monitor *FLAGS: build-image
 # Run the OS image in QEMU, passing any additional flags given to QEMU
 run *FLAGS: build-image
     qemu-system-{{arch}} \
+        {{qemu-arch-args}} \
         -m 512M \
         -drive file=artifacts/{{arch}}/polaris.img,format=raw,if=virtio \
         -bios $OVMF_DIR/ovmf-code-{{arch}}.fd \
@@ -89,7 +95,7 @@ _reset-image: _mk-artifacts-dir
     mmd -i artifacts/{{arch}}/polaris.img@@1M ::/EFI
     mmd -i artifacts/{{arch}}/polaris.img@@1M ::/EFI/BOOT
     mmd -i artifacts/{{arch}}/polaris.img@@1M ::/polaris
-    mcopy -i artifacts/{{arch}}/polaris.img@@1M vendor/limine/{{limine-image-name}} ::/EFI/BOOT/
+    mcopy -i artifacts/{{arch}}/polaris.img@@1M {{limine-dir}}/{{limine-image-name}} ::/EFI/BOOT/
 
 _ensure-image:
     [ -f artifacts/{{arch}}/polaris.img ] || just _reset-image

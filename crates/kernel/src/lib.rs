@@ -6,8 +6,6 @@
 
 extern crate alloc;
 
-#[cfg(feature = "acpi")]
-mod acpi;
 mod arch;
 mod console;
 mod framebuffer;
@@ -24,7 +22,7 @@ pub use unwind::{capture_unwind_state, handle_panic};
 
 #[used]
 #[unsafe(link_section = ".requests")]
-static BASE_REVISION: BaseRevision = BaseRevision::with_revision(4);
+static BASE_REVISION: BaseRevision = BaseRevision::with_revision(6);
 
 pub fn kernel_main(stack_start: usize) -> ! {
     assert!(BASE_REVISION.is_supported());
@@ -46,5 +44,11 @@ pub fn kernel_main(stack_start: usize) -> ! {
     mem::use_pmm(pmm);
     log::debug!("Physical Memory Manager initialized and in use");
 
-    unwind::test();
+    arch::init_timers();
+    log::debug!("Timer subsystem initialized");
+
+    arch::set_periodic(1000, || log::info!("Timer tick"));
+    arch::set_oneshot(5000, || log::info!("One-shot triggered"));
+
+    arch::park();
 }

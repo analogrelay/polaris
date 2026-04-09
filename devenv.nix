@@ -1,7 +1,9 @@
 # cSpell:ignore pkgs
 { pkgs, lib, config, inputs, ... }:
 
-let ovmf = pkgs.callPackage ./nix/ovmf.nix { };
+let
+  ovmf = pkgs.callPackage ./nix/ovmf.nix { };
+  limine = pkgs.callPackage ./nix/limine.nix { };
 in {
   claude.code.enable = true;
 
@@ -17,6 +19,7 @@ in {
   packages = with pkgs; [
     llvmPackages.bintools
     ovmf
+    limine
     just
     dosfstools
     mtools
@@ -27,4 +30,5 @@ in {
 
   env.RUST_TARGET_PATH = "${config.git.root}/script/targets";
   env.OVMF_DIR = "${ovmf}";
+  env.LIMINE_DIR = "${limine}";
 }

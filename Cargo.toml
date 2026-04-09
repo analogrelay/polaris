@@ -9,8 +9,7 @@ authors = ["Ashley Stanton-Nurse <contact@analogrelay.net>"]
 
 # cSpell:disable
 [workspace.dependencies]
-acpi = "5.2.0"
-limine = "0.5.0"
+limine = "0.6"
 noto-sans-mono-bitmap = { version = "0.3.2", features = ["size_24"] }
 spin = "0.10.0"
 uart_16550 = "0.4.0"

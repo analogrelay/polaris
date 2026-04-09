@@ -3,14 +3,12 @@
 
 pkgs.stdenv.mkDerivation {
   pname = "edk2-ovmf";
-  version = "nightly";
+  version = "nightly-20260409T020240Z";
 
   src = pkgs.fetchurl {
     url =
-      "https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/edk2-ovmf.tar.gz";
-    # You'll need to add the sha256 hash after the first build attempt
-    # or set it to pkgs.lib.fakeSha256 initially
-    sha256 = "sha256-bKiwoRgXfdK0/ACTOsM2FOe7lCcPOBGqm8tzBNiR1w0=";
+      "https://github.com/osdev0/edk2-ovmf-nightly/releases/download/nightly-20260409T020240Z/edk2-ovmf.tar.gz";
+    sha256 = "sha256-ht4yQd2UCjaM2N+WVbtVKFbCqPaz9kMSr9Y3abACUBM=";
   };
 
   dontBuild = true;

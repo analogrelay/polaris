@@ -248,8 +248,8 @@ extern "x86-interrupt" fn irq15_handler(stack_frame: InterruptStackFrame) {
 // These are commonly used for APIC timer, IPIs, etc.
 
 #[unsafe(link_section = ".interrupt_handlers")]
-extern "x86-interrupt" fn irq16_handler(stack_frame: InterruptStackFrame) {
-    common_interrupt(48, stack_frame, None);
+extern "x86-interrupt" fn irq16_handler(_stack_frame: InterruptStackFrame) {
+    crate::arch::x86_64::timer::handle_tick();
 }
 
 #[unsafe(link_section = ".interrupt_handlers")]

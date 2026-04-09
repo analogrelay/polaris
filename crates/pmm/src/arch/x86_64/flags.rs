@@ -35,6 +35,33 @@ impl PageFlags {
         self.0
             .set(x86_64::structures::paging::PageTableFlags::PRESENT, present);
     }
+
+    /// Sets or clears the writable bit.
+    pub fn set_writable(&mut self, writable: bool) {
+        self.0
+            .set(x86_64::structures::paging::PageTableFlags::WRITABLE, writable);
+    }
+
+    /// Sets or clears the write-through bit (PWT).
+    pub fn set_write_through(&mut self, v: bool) {
+        self.0
+            .set(x86_64::structures::paging::PageTableFlags::WRITE_THROUGH, v);
+    }
+
+    /// Sets or clears the cache-disable bit (PCD).
+    ///
+    /// When set, the page is treated as UC- (Uncacheable Minus), preventing CPU caching.
+    /// Use this for MMIO regions.
+    pub fn set_cache_disable(&mut self, v: bool) {
+        self.0
+            .set(x86_64::structures::paging::PageTableFlags::NO_CACHE, v);
+    }
+
+    /// Sets or clears the no-execute bit (NX/XD).
+    pub fn set_no_execute(&mut self, v: bool) {
+        self.0
+            .set(x86_64::structures::paging::PageTableFlags::NO_EXECUTE, v);
+    }
 }
 
 impl Default for PageFlags {

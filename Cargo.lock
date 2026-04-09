@@ -3,17 +3,6 @@
 version = 4
 
 [[package]]
-name = "acpi"
-version = "5.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94476c7ef97af4c4d998b3f422c1b01d5211aad57c80ed200baf148d1f1efab6"
-dependencies = [
- "bit_field",
- "bitflags 2.10.0",
- "log",
-]
-
-[[package]]
 name = "anstream"
 version = "0.6.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -223,12 +212,9 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
 name = "limine"
-version = "0.5.0"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af6d2ee42712e7bd2c787365cd1dab06ef59a61becbf87bec7b32b970bd2594b"
-dependencies = [
- "bitflags 2.10.0",
-]
+checksum = "90b240f611eba0b43bf3e97478d87f12322c6c0f540bdad885c3e8c4a0d57333"
 
 [[package]]
 name = "lock_api"
@@ -270,7 +256,6 @@ dependencies = [
 name = "polaris_kernel"
 version = "0.1.0"
 dependencies = [
- "acpi",
  "gimli",
  "limine",
  "log",

@@ -1,17 +1,22 @@
 use x86_64::{
     VirtAddr,
     instructions::tables::load_tss,
-    registers::segmentation::{CS, Segment},
+    registers::segmentation::{CS, SS, Segment},
     structures::{
         gdt::{Descriptor, GlobalDescriptorTable, SegmentSelector},
         tss::TaskStateSegment,
     },
 };
 
+pub(crate) mod acpi;
+pub(crate) mod lapic;
 mod interrupts;
+mod paging;
+pub(crate) mod timer;
 mod unwind;
 
 pub use interrupts::{InterruptState, InterruptVector};
+pub use timer::{set_oneshot, set_periodic};
 pub use unwind::UnwindState;
 
 /// Returns true if the given address is in user space (lower half).
@@ -80,7 +85,21 @@ pub fn init() {
     gdt.load();
     unsafe {
         CS::set_reg(selectors.code_selector);
+        // Clear SS to the null descriptor: valid in 64-bit ring-0 and required so that
+        // hardware interrupts don't fault (#GP) when validating the stale SS that
+        // the bootloader left behind (which referenced a descriptor in its own GDT).
+        SS::set_reg(SegmentSelector(0));
         load_tss(selectors.tss_selector);
     }
     interrupts::idt().load();
+}
+
+/// Initializes the timer subsystem and enables hardware interrupts.
+///
+/// Must be called after `mem::init_allocator()`, which sets up the address translator needed
+/// to access ACPI tables and LAPIC/HPET MMIO via the higher-half direct map.
+pub fn init_timers() {
+    lapic::init();
+    timer::init();
+    x86_64::instructions::interrupts::enable();
 }
