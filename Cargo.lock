@@ -256,6 +256,7 @@ dependencies = [
 name = "polaris_kernel"
 version = "0.1.0"
 dependencies = [
+ "elf",
  "gimli",
  "limine",
  "log",
@@ -266,6 +267,10 @@ dependencies = [
  "uart_16550",
  "x86_64",
 ]
+
+[[package]]
+name = "polaris_system"
+version = "0.1.0"
 
 [[package]]
 name = "proc-macro2"

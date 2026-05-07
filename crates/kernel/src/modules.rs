@@ -33,6 +33,7 @@ impl Eq for ModuleName {}
 
 impl ModuleName {
     pub const DEBUG_SYMBOLS: Self = Self("/polaris/polaris.symtab");
+    pub const SYSTEM: Self = Self("/polaris/system.elf");
 
     pub fn new(name: &'static str) -> Self {
         Self(name)
@@ -53,7 +54,7 @@ impl Module {
         let modules = MODULES.response()?.modules();
         for module in modules {
             let name = ModuleName::new(module.path());
-            log::debug!("matching {:?} against {:?}", name, module_name);
+            log::trace!("matching {:?} against {:?}", name, module_name);
             if name == module_name {
                 return Some(Module {
                     data: module.data(),

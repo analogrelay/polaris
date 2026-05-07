@@ -26,6 +26,9 @@ pub const PAGE_SIZE: usize = 4096;
 /// This can be 5 with 5-level paging, but 4 is the standard.
 pub const PAGE_TABLE_LEVELS: usize = 4;
 
+/// First PML4 index in the kernel (upper) half. Entries 256–511 are kernel space.
+pub const KERNEL_ENTRY_START: usize = 256;
+
 /// Returns the page table index for a given virtual address at the specified level.
 ///
 /// For x86_64, each level uses 9 bits, with level 0 being the page table (PT),

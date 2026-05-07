@@ -28,6 +28,10 @@ pub enum AllocError {
     InvalidAlignment,
     /// Attempted to deallocate an invalid address or order.
     InvalidDeallocation,
+    /// The requested virtual region overlaps an already-mapped VMA.
+    RegionAlreadyMapped,
+    /// No free virtual address range large enough for the requested allocation.
+    OutOfVirtualAddressSpace,
 }
 
 /// Node in an intrusive linked list for free blocks.

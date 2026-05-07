@@ -14,11 +14,14 @@ mod interrupts;
 mod mem;
 mod modules;
 mod serial;
+mod syscall;
 mod unwind;
 
 use limine::BaseRevision;
 
 pub use unwind::{capture_unwind_state, handle_panic};
+
+use crate::modules::ModuleName;
 
 #[used]
 #[unsafe(link_section = ".requests")]
@@ -47,8 +50,7 @@ pub fn kernel_main(stack_start: usize) -> ! {
     arch::init_timers();
     log::debug!("Timer subsystem initialized");
 
-    arch::set_periodic(1000, || log::info!("Timer tick"));
-    arch::set_oneshot(5000, || log::info!("One-shot triggered"));
+    let system_module = Module::get(ModuleName::SYSTEM).expect("system module not found");
 
     arch::park();
 }

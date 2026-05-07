@@ -91,7 +91,7 @@ impl AddressTranslator {
     }
 
     /// Returns a reference to the current global address translator if it has been set.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "software-emulation"))]
     pub fn try_current() -> Option<&'static AddressTranslator> {
         #[cfg(not(any(test, feature = "software-emulation")))]
         {
@@ -177,6 +177,9 @@ macro_rules! impl_address_common {
         pub struct $name(usize);
 
         impl $name {
+            /// The zero address.
+            pub const ZERO: Self = Self(0);
+
             /// Creates a new address without validation.
             ///
             /// # Safety

@@ -1,0 +1,13 @@
+[package]
+name = "polaris_system"
+publish = false
+description = "The root user-mode process for Polaris"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "system"
+path = "src/main.rs"
+
+[dependencies]

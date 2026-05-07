@@ -57,6 +57,18 @@ impl PageFlags {
             .set(x86_64::structures::paging::PageTableFlags::NO_CACHE, v);
     }
 
+    /// Returns whether the user-accessible bit is set.
+    pub fn is_user(self) -> bool {
+        self.0
+            .contains(x86_64::structures::paging::PageTableFlags::USER_ACCESSIBLE)
+    }
+
+    /// Sets or clears the user-accessible bit.
+    pub fn set_user(&mut self, user: bool) {
+        self.0
+            .set(x86_64::structures::paging::PageTableFlags::USER_ACCESSIBLE, user);
+    }
+
     /// Sets or clears the no-execute bit (NX/XD).
     pub fn set_no_execute(&mut self, v: bool) {
         self.0

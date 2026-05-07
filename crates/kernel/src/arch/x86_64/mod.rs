@@ -1,7 +1,11 @@
+use pmm::VirtualAddress;
 use x86_64::{
     VirtAddr,
     instructions::tables::load_tss,
-    registers::segmentation::{CS, SS, Segment},
+    registers::{
+        model_specific::KernelGsBase,
+        segmentation::{CS, SS, Segment},
+    },
     structures::{
         gdt::{Descriptor, GlobalDescriptorTable, SegmentSelector},
         tss::TaskStateSegment,
@@ -9,12 +13,15 @@ use x86_64::{
 };
 
 pub(crate) mod acpi;
-pub(crate) mod lapic;
+mod cpu;
 mod interrupts;
+pub(crate) mod lapic;
 mod paging;
+mod syscall;
 pub(crate) mod timer;
 mod unwind;
 
+pub use cpu::CpuContext;
 pub use interrupts::{InterruptState, InterruptVector};
 pub use timer::{set_oneshot, set_periodic};
 pub use unwind::UnwindState;
@@ -43,6 +50,7 @@ pub extern "C" fn kenter() -> ! {
         core::arch::asm!("mov {}, rsp", out(reg) rsp);
         rsp as usize
     };
+
     crate::kernel_main(stack_start)
 }
 
@@ -64,11 +72,17 @@ fn tss() -> &'static TaskStateSegment {
 fn gdt() -> (&'static GlobalDescriptorTable, &'static Selectors) {
     let (gdt, selectors) = GDT.call_once(|| {
         let mut gdt = GlobalDescriptorTable::new();
-        let code_selector = gdt.append(Descriptor::kernel_code_segment());
-        let tss_selector = gdt.append(Descriptor::tss_segment(tss()));
+        let kernel_code = gdt.append(Descriptor::kernel_code_segment());
+        let kernel_data = gdt.append(Descriptor::kernel_data_segment());
+        let user_data = gdt.append(Descriptor::user_data_segment());
+        let user_code = gdt.append(Descriptor::user_code_segment());
+        let kernel_tss = gdt.append(Descriptor::tss_segment(tss()));
         let selectors = Selectors {
-            code_selector,
-            tss_selector,
+            kernel_code,
+            kernel_data,
+            user_data,
+            user_code,
+            kernel_tss,
         };
         (gdt, selectors)
     });
@@ -76,22 +90,26 @@ fn gdt() -> (&'static GlobalDescriptorTable, &'static Selectors) {
 }
 
 struct Selectors {
-    code_selector: SegmentSelector,
-    tss_selector: SegmentSelector,
+    kernel_code: SegmentSelector,
+    kernel_tss: SegmentSelector,
+    kernel_data: SegmentSelector,
+    user_data: SegmentSelector,
+    user_code: SegmentSelector,
 }
 
 pub fn init() {
     let (gdt, selectors) = gdt();
     gdt.load();
     unsafe {
-        CS::set_reg(selectors.code_selector);
+        CS::set_reg(selectors.kernel_code);
         // Clear SS to the null descriptor: valid in 64-bit ring-0 and required so that
         // hardware interrupts don't fault (#GP) when validating the stale SS that
         // the bootloader left behind (which referenced a descriptor in its own GDT).
         SS::set_reg(SegmentSelector(0));
-        load_tss(selectors.tss_selector);
+        load_tss(selectors.kernel_tss);
     }
     interrupts::idt().load();
+    cpu::init(cpu::CpuNumber(0))
 }
 
 /// Initializes the timer subsystem and enables hardware interrupts.

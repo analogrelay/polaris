@@ -165,7 +165,7 @@ pub fn init_pmm() -> pmm::PhysicalMemoryManager {
         .entries();
 
     for entry in boot_memmap {
-        log::debug!(
+        log::trace!(
             "mem: base={:x} size={} type={}",
             entry.base,
             entry.length,

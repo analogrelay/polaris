@@ -31,6 +31,9 @@ pub const PAGE_SIZE: usize = 16;
 /// Number of page table levels (3 levels: level 2, 1, 0).
 pub const PAGE_TABLE_LEVELS: usize = 3;
 
+/// First root-table index in the kernel (upper) half. Entries 8–15 are kernel space.
+pub const KERNEL_ENTRY_START: usize = 8;
+
 /// Returns the page table index for a given virtual address at the specified level.
 ///
 /// For software emulation:

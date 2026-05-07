@@ -112,6 +112,38 @@ impl PageDirectory {
         }
     }
 
+    /// Returns a shared reference to the root page table.
+    fn root_table(&self) -> &PageTable {
+        // SAFETY: root is always a valid, initialized PageTable pointer for Self's lifetime.
+        unsafe { &*self.root }
+    }
+
+    /// Returns a mutable reference to the root page table.
+    fn root_table_mut(&mut self) -> &mut PageTable {
+        // SAFETY: root is always a valid, initialized PageTable pointer for Self's lifetime.
+        unsafe { &mut *self.root }
+    }
+
+    /// Copies root-table entries [`crate::arch::KERNEL_ENTRY_START`..len] from `source`
+    /// into this directory. Used to snapshot the kernel half into a new user address space.
+    pub fn copy_kernel_half_from(&mut self, source: &PageDirectory) {
+        let start = crate::arch::KERNEL_ENTRY_START;
+        let len = self.root_table().len();
+        for i in start..len {
+            *self.root_table_mut().entry_mut(i) = source.root_table().entry(i);
+        }
+    }
+
+    /// Activates this page directory by loading its root table into hardware (CR3 on x86_64).
+    ///
+    /// # Safety
+    /// The caller must ensure the address space correctly maps all memory that will be
+    /// accessed after this point, including the kernel text and stack.
+    pub unsafe fn activate(&self) {
+        // SAFETY: propagated from caller.
+        unsafe { self.root_table().activate() }
+    }
+
     /// Maps a virtual address to a physical address with the given flags.
     ///
     /// This function walks the page table hierarchy, allocating intermediate tables
@@ -131,7 +163,8 @@ impl PageDirectory {
             "physical address must be page-aligned"
         );
 
-        let entry = self.walk_or_create(virt);
+        let user = flags.is_user();
+        let entry = self.walk_or_create(virt, user);
         let mut new_flags = flags;
         new_flags.set_present(true);
         *entry = PageEntry::new(phys, new_flags);
@@ -193,9 +226,13 @@ impl PageDirectory {
 
     /// Walks the page table hierarchy, creating intermediate tables as needed.
     ///
+    /// `user` controls whether newly-created intermediate tables are marked
+    /// user-accessible. This must be `true` when mapping user-mode pages, otherwise
+    /// the CPU will fault when user-mode code tries to walk the hierarchy.
+    ///
     /// Returns a mutable reference to the final page table entry for the given
     /// virtual address.
-    fn walk_or_create(&mut self, virt: VirtualAddress) -> &mut PageEntry {
+    fn walk_or_create(&mut self, virt: VirtualAddress, user: bool) -> &mut PageEntry {
         // SAFETY: root is a valid PageTable pointer (either owned or borrowed from Limine).
         let mut table = unsafe { &mut *self.root };
         let virt_addr = virt.as_usize();
@@ -222,6 +259,10 @@ impl PageDirectory {
                 // Intermediate entries must be writable for writes to propagate through the
                 // hierarchy; x86_64 CR0.WP enforces the writable bit at every level.
                 flags.set_writable(true);
+                // Propagate user-accessibility so user-mode code can walk to its own pages.
+                if user {
+                    flags.set_user(true);
+                }
 
                 *entry = PageEntry::new(new_table_phys, flags);
             }
@@ -320,5 +361,46 @@ mod tests {
             let phys = PhysicalAddress::new(0x0200 + (i * arch::PAGE_SIZE));
             dir.map(virt, phys, flags);
         }
+    }
+
+    #[test]
+    fn copy_kernel_half_copies_upper_entries() {
+        setup();
+        let mut src = PageDirectory::new();
+        let mut flags = PageFlags::empty();
+        flags.set_present(true);
+
+        // Map a page in the kernel (upper) half.
+        // Software arch: KERNEL_ENTRY_START=8, so root index >= 8 means kernel.
+        // Root index = bits 12-15. Set bit 15 for canonical kernel address.
+        // 0xFFFF_FFFF_FFFF_8000 has root index = 0x8, page-aligned at offset 0.
+        let virt = VirtualAddress::new(0xFFFF_FFFF_FFFF_8000);
+        let phys = PhysicalAddress::new(0x0010);
+        src.map(virt, phys, flags);
+
+        let mut dst = PageDirectory::new();
+        dst.copy_kernel_half_from(&src);
+
+        // The entry should be accessible via dst (the full sub-table chain is shared).
+        assert_eq!(dst.unmap(virt), Some(phys));
+    }
+
+    #[test]
+    fn copy_kernel_half_does_not_copy_lower_entries() {
+        setup();
+        let mut src = PageDirectory::new();
+        let mut flags = PageFlags::empty();
+        flags.set_present(true);
+
+        // Map a page in the user (lower) half.
+        let virt = VirtualAddress::new(arch::PAGE_SIZE);
+        let phys = PhysicalAddress::new(0x0010);
+        src.map(virt, phys, flags);
+
+        let mut dst = PageDirectory::new();
+        dst.copy_kernel_half_from(&src);
+
+        // Lower half must not be copied.
+        assert_eq!(dst.unmap(virt), None);
     }
 }

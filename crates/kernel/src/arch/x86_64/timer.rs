@@ -87,8 +87,7 @@ pub fn init() {
 
     // Record the HPET start time and wait for 10ms.
     // SAFETY: reading the HPET main counter register.
-    let start =
-        unsafe { core::ptr::read_volatile((hpet_base + HPET_COUNTER) as *const u64) };
+    let start = unsafe { core::ptr::read_volatile((hpet_base + HPET_COUNTER) as *const u64) };
 
     loop {
         // SAFETY: reading the HPET main counter register.
@@ -104,7 +103,10 @@ pub fn init() {
     // The LAPIC counter counts down from the initial value.
     let elapsed = 0xFFFF_FFFFu32.wrapping_sub(end_count);
     let ticks_per_ms = elapsed / 10;
-    assert!(ticks_per_ms > 0, "LAPIC timer calibration produced zero ticks/ms");
+    assert!(
+        ticks_per_ms > 0,
+        "LAPIC timer calibration produced zero ticks/ms"
+    );
 
     LAPIC_TICKS_PER_MS.call_once(|| ticks_per_ms);
     log::debug!("LAPIC timer: {ticks_per_ms} ticks/ms (divide-by-16)");

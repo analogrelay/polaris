@@ -9,6 +9,7 @@ profile := "dev"
 
 # Values derived from the architecture
 kernel-target := arch + "-polaris-kernel"
+user-target := arch + "-polaris-user"
 limine-image-name := if arch == "x86_64" { "BOOTX64.EFI" } else { error("Unsupported architecture: {{arch}}") }
 limine-dir := env("LIMINE_DIR", "vendor/limine")
 
@@ -18,6 +19,7 @@ build-std-features := "compiler-builtins-mem"
 profile-dir := if profile == "release" { "release" } else { "debug" }
 release-flag := if profile == "release" { "--release" } else { "" }
 kernel-cargo-args := "-Z build-std=" + build-std + " -Z build-std-features=" + build-std-features + " --target " + kernel-target + " " + release-flag
+user-cargo-args := "-Z build-std=" + build-std + " -Z build-std-features=" + build-std-features + " --target " + user-target + " " + release-flag
 
 export RUSTFLAGS := "-Zunstable-options"
 
@@ -60,7 +62,17 @@ run *FLAGS: build-image
 build-image: build-kernel _ensure-image
     mcopy -i artifacts/{{arch}}/polaris.img@@1M -D o artifacts/{{arch}}/polaris.kernel ::/polaris/polaris.kernel
     mcopy -i artifacts/{{arch}}/polaris.img@@1M -D o artifacts/{{arch}}/polaris.symtab ::/polaris/polaris.symtab
+    mcopy -i artifacts/{{arch}}/polaris.img@@1M -D o artifacts/{{arch}}/system.elf ::/polaris/system.elf
     mcopy -i artifacts/{{arch}}/polaris.img@@1M -D o crates/kernel/limine.conf ::/EFI/BOOT/limine.conf
+
+# Build the user-mode process
+build-system: _mk-artifacts-dir
+    cargo build \
+        {{user-cargo-args}} \
+        --package polaris_system
+    nm --numeric-sort "target/{{user-target}}/{{profile-dir}}/system.elf" | c++filt > artifacts/{{arch}}/system.elf.nm
+    objdump -S "target/{{user-target}}/{{profile-dir}}/system.elf" > artifacts/{{arch}}/system.elf.asm
+    cp "target/{{user-target}}/{{profile-dir}}/system.elf" artifacts/{{arch}}/system.elf
 
 # Build the kernel for the specified target
 build-kernel: _mk-artifacts-dir
@@ -99,3 +111,7 @@ _reset-image: _mk-artifacts-dir
 
 _ensure-image:
     [ -f artifacts/{{arch}}/polaris.img ] || just _reset-image
+
+update-targets:
+    script/update-target "script/targets/{{kernel-target}}.json"
+    script/update-target "script/targets/{{user-target}}.json"

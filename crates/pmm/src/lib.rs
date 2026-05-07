@@ -26,10 +26,12 @@ mod memmap;
 mod numbers;
 mod page_directory;
 mod physical_memory_manager;
+mod virtual_memory_manager;
 
 pub use address::{AddressTranslator, PhysicalAddress, VirtualAddress};
-pub use address_space::AddressSpace;
-pub use block_allocator::{AllocError, BlockAllocator, MemoryRegion};
+pub use address_space::{AddressSpace, VirtualMemoryArea, VmaKind};
+pub use block_allocator::{AllocError as BlockAllocError, BlockAllocator, MemoryRegion};
+pub use physical_memory_manager::AllocError;
 pub use frame::{Frame, FrameFlag, FrameFlags, ORDER_NOT_BUDDY};
 pub use human_address::HumanAddress;
 pub use human_size::HumanSize;
@@ -37,5 +39,6 @@ pub use memmap::{BootMemoryRegion, FRAMES_PER_SECTION, MemoryMap, SECTION_SIZE};
 pub use numbers::{FrameNumber, PageNumber};
 pub use page_directory::PageDirectory;
 pub use physical_memory_manager::PhysicalMemoryManager;
+pub use virtual_memory_manager::VirtualMemoryManager;
 
 pub use arch::{PAGE_SIZE, PageFlags};

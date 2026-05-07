@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+    echo "Usage: $0 <path/to/target.json>" >&2
+    exit 1
+fi
+
+JSON_FILE="$1"
+BASE="${JSON_FILE%.json}"
+LD_FILE="${BASE}.ld"
+
+if [[ ! -f "$JSON_FILE" ]]; then
+    echo "Error: $JSON_FILE not found" >&2
+    exit 1
+fi
+
+if [[ ! -f "$LD_FILE" ]]; then
+    echo "No linker script found at $LD_FILE, nothing to do."
+    exit 0
+fi
+
+LD_CONTENTS=$(cat "$LD_FILE")
+
+jq --arg script "$LD_CONTENTS" \
+    'del(."link-script") | . + {"link-script": $script}' \
+    "$JSON_FILE" > "${JSON_FILE}.tmp"
+
+mv "${JSON_FILE}.tmp" "$JSON_FILE"
+
+echo "Inserted $LD_FILE into $JSON_FILE"
